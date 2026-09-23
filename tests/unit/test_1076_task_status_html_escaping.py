@@ -6,14 +6,16 @@
 """Regression test for fork issue #1076: conversion tasks reporting HTML
 instead of showing the underlying text.
 
-`ebook-convert`/kepubify failures land in `task.message`/`task.error` as raw
-subprocess output, which sometimes contains stray HTML fragments (e.g. a
-converter error that embeds part of the source markup). The `/tasks` page
-renders `taskMessage` and `error` straight into a bootstrap-table cell with no
-client-side escaping, and `render_task_status` already escaped `user` for the
-same reason (see the `# prevent xss` comment) but not these two fields - so a
-converter message containing `<...>` was interpreted as markup by the browser
-instead of shown as text.
+`ebook-convert`/kepubify failures land in `task.error` as raw subprocess
+output, which sometimes contains stray HTML fragments (e.g. a converter error
+that embeds part of the source markup). The `/tasks` page renders `error`
+straight into a bootstrap-table cell with no client-side escaping, so it has to
+be escaped server-side the same way `user` already is.
+
+`task.message` is different: some tasks build it as HTML on purpose (e.g.
+"File format EPUB added to <a href=...>Title</a>" from editbooks), with the
+dynamic parts escaped where the message is built, so it must reach the table
+unchanged.
 """
 
 from types import SimpleNamespace
@@ -36,14 +38,17 @@ def _task(name="Convert book", message=None, error=None, stat=STAT_FAIL):
     )
 
 
-def test_task_message_with_html_is_escaped(monkeypatch):
+def test_task_message_link_is_kept(monkeypatch):
     user = SimpleNamespace(name="alice", role_admin=lambda: False)
     monkeypatch.setattr(tasks_status, "current_user", user)
 
-    task = _task(message="failed on <b>chapter1.html</b>")
+    # Same shape editbooks queues when a format is added to an existing book;
+    # the title inside the link is already escaped there.
+    message = 'File format EPUB added to <a href="/book/5">Tom &amp; Jerry</a>'
+    task = _task(name="Upload", message=message)
     rendered = tasks_status.render_task_status([(1, "alice", None, task, False)])
 
-    assert rendered[0]["taskMessage"] == "Convert book: failed on &lt;b&gt;chapter1.html&lt;/b&gt;"
+    assert rendered[0]["taskMessage"] == "Upload: " + message
 
 
 def test_task_error_with_html_is_escaped(monkeypatch):
